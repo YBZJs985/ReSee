@@ -82,6 +82,36 @@ cmake --build build --target ReSee -j 8
 
 3. 维护者可以在 VS2022 x64 开发命令行使用 [Windows 打包脚本](scripts/package-windows.ps1)。向脚本传入本次编译所用的 Qt 与 LGPL 共享版 FFmpeg SDK，以及 MSVC x64 应用本地运行库路径。公开包使用动态链接的 Qt 和 FFmpeg 库，第三方许可和对应源码见发行页。
 
+## 快速构建（macOS）
+
+已验证环境：Apple Silicon arm64，macOS 27.2，Xcode Command Line Tools 27.2，CMake 4.5.1，Ninja 1.13.2，Qt 6.12.0（Homebrew），FFmpeg 8.1.3（Homebrew `ffmpeg@8`）。工程要求 CMake 3.24+、Qt 6.8+、C++20；Qt 需包含 `Quick`、`QuickControls2`、`QuickDialogs2`、`Multimedia`、`ShaderTools`、`Concurrent` 以及 `Qt6::GuiPrivate`（私有头文件，用于 NV12 场景图渲染）。
+
+使用原生 Homebrew 构建：
+
+```bash
+brew install cmake ninja qt ffmpeg@8
+QT_PREFIX="$(brew --prefix qt)"
+FFMPEG_PREFIX="$(brew --prefix ffmpeg@8)"
+cmake -S . -B build/macos -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_PREFIX_PATH="$QT_PREFIX" \
+  -DFFMPEG_ROOT="$FFMPEG_PREFIX"
+cmake --build build/macos --target ReSee --parallel
+```
+
+构建产物为 `build/macos/bin/ReSee.app`。若 `brew` 的 Qt 版本不满足，可用 `CMAKE_PREFIX_PATH` 指向其它 Qt 6.8+ SDK；不要把本机 SDK 路径写进源码。
+
+打包为可独立双击启动的 `.app`（收集 Qt 运行时、QML 插件以及 FFmpeg 传递依赖，改写为 `@rpath`，最后 ad-hoc 签名）：
+
+```bash
+"$QT_PREFIX/bin/macdeployqt" build/macos/bin/ReSee.app -qmldir="$PWD/qml"
+./scripts/bundle-finalize.sh build/macos/bin/ReSee.app
+```
+
+完成后可用 `otool -L build/macos/bin/ReSee.app/Contents/MacOS/ReSee` 确认不再有指向本机 Homebrew 前缀的依赖。Developer ID 签名与公证属于独立发布步骤，不在本脚本范围内。
+
+运行时数据默认位于系统应用数据目录；设置 `RESEE_DATA_DIR` 为本机绝对路径可隔离配置、索引、缓存与截图。
+
 ## License
 
 [MIT](LICENSE)
