@@ -1,0 +1,31 @@
+# Build & distribution directories
+build/
+dist/
+out/
+cmake-build-*/
+
+# Local dependency junctions / SDKs
+_qt6/
+_ffmpeg/
+
+# IDE & OS files
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.sln
+*.vcxproj*
+.DS_Store
+Thumbs.db
+
+# Runtime data
+*.db
+*.db-wal
+*.db-shm
+config.json
+logs/
+/cache/
+thumbs/
+screenshots/
+/data/
