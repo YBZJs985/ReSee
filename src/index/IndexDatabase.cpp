@@ -248,7 +248,7 @@ QHash<QString, ExistingFileMeta> IndexDatabase::loadExistingFilesMeta() {
 
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(m_db,
-            "SELECT path, id, file_size, mtime_ms, real_duration_ms, status FROM segments;",
+            "SELECT path, id, file_size, mtime_ms, real_duration_ms, status, stream_key FROM segments;",
             -1, &stmt, nullptr) != SQLITE_OK) {
         return result;
     }
@@ -261,6 +261,7 @@ QHash<QString, ExistingFileMeta> IndexDatabase::loadExistingFilesMeta() {
         meta.mtimeMs = sqlite3_column_int64(stmt, 3);
         meta.realDurationMs = sqlite3_column_int64(stmt, 4);
         meta.status = static_cast<SegmentStatus>(sqlite3_column_int(stmt, 5));
+        meta.streamKey = colText(stmt, 6);
         result.insert(p, meta);
     }
     sqlite3_finalize(stmt);

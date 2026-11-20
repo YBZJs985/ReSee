@@ -6,6 +6,12 @@
 
 *演示截图中的六路画面均为合成场景。*
 
+## Windows 下载
+
+前往 [GitHub Releases](https://github.com/a15112542067-YBZJ/ReSee/releases/latest) 下载 Windows x64 ZIP。解压整个 ZIP，双击 `ReSee.exe`。Qt、FFmpeg 和 MSVC 运行库随包提供。
+
+第一次启动时，选择一个包含摄像机 MP4 录像的本地文件夹或 NAS 目录。可以稍后在「设置 → 机位」添加摄像机、修改目录或重新扫描。若扫描遇到问题，点击顶部「录像目录提示」查看原因和处理方式。NAS 目录无法访问时，先在系统文件管理器中确认共享目录已连接并可读取。
+
 ## 核心特性
 
 - **动态多路严格同步**：支持任意数量摄像头自由增删（单摄 `00_`、双摄 `00_ + 10_`），自适应多路宫格与单路放大布局；全路共享 `MasterClock` 统一真实时间轴。
@@ -74,7 +80,7 @@ cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DMC_WIN32_GUI=ON
 cmake --build build --target ReSee -j 8
 ```
 
-3. 使用 `windeployqt` 收集 Qt 运行时并拷贝 FFmpeg DLL 到 `dist/` 后即可运行 `ReSee.exe`。
+3. 维护者可以在 VS2022 x64 开发命令行使用 [Windows 打包脚本](scripts/package-windows.ps1)。向脚本传入本次编译所用的 Qt 与 LGPL 共享版 FFmpeg SDK，以及 MSVC x64 应用本地运行库路径。公开包使用动态链接的 Qt 和 FFmpeg 库，第三方许可和对应源码见发行页。
 
 ## License
 

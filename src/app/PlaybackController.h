@@ -43,6 +43,8 @@ class PlaybackController : public QObject {
     Q_PROPERTY(bool diagnosticsVisible READ diagnosticsVisible WRITE setDiagnosticsVisible NOTIFY layoutChanged)
     Q_PROPERTY(bool dateNavVisible READ dateNavVisible WRITE setDateNavVisible NOTIFY layoutChanged)
 
+    Q_PROPERTY(bool firstRun READ firstRun CONSTANT)
+    Q_PROPERTY(QString scanIssueText READ scanIssueText NOTIFY scanChanged)
     Q_PROPERTY(bool scanning READ scanning NOTIFY scanChanged)
     Q_PROPERTY(QString scanStatusText READ scanStatusText NOTIFY scanChanged)
     Q_PROPERTY(int scanTotalFiles READ scanTotalFiles NOTIFY scanChanged)
@@ -136,6 +138,8 @@ public:
     bool dateNavVisible() const { return m_dateNavVisible; }
     void setDateNavVisible(bool v);
 
+    bool firstRun() const { return m_firstRun; }
+    QString scanIssueText() const { return m_scanIssues.join(QLatin1Char('\n')); }
     bool scanning() const { return m_scanProgress.scanning || m_scanProgress.stageBRunning; }
     QString scanStatusText() const { return m_scanProgress.statusText; }
     int scanTotalFiles() const { return m_scanProgress.totalFiles; }
@@ -241,10 +245,10 @@ public:
     Q_INVOKABLE void updateCacheAndDecodeSettings(const QString& cacheDir,
                                                   int cacheMaxGb,
                                                   bool preferHw);
-    Q_INVOKABLE void updateCameraDirectories(const QVariantList& paths, bool rescanNow);
+    Q_INVOKABLE QString updateCameraDirectories(const QVariantList& paths, bool rescanNow);
     Q_INVOKABLE QString localFolderPath(const QUrl& folder) const { return folder.toLocalFile(); }
     Q_INVOKABLE bool detectDualCameraDir(const QString& rootPath) const;
-    Q_INVOKABLE bool addCamera(const QString& displayName, const QString& rootPath, bool isDual);
+    Q_INVOKABLE QString addCamera(const QString& displayName, const QString& rootPath, bool isDual);
     Q_INVOKABLE bool removeCamera(const QString& cameraId);
     Q_INVOKABLE QString normalizedShortcut(const QString& sequence) const;
     Q_INVOKABLE void updateShortcuts(const QString& togglePlay, const QString& addBookmark,
@@ -276,6 +280,7 @@ private slots:
 private:
     void pickInitialPlaybackTime();
     void reloadCameraConfiguration();
+    void reportScanIssue(const QString& issue);
     void applyAudioRoutingForFocus(int focusedIdx);
 
     AppConfig m_config;
@@ -292,6 +297,8 @@ private:
 
     QVector<QPointer<VideoRenderItem>> m_videoItems;
     ScanProgress m_scanProgress;
+    QStringList m_scanIssues;
+    bool m_firstRun = false;
     QTimer* m_autoSaveTimer = nullptr;
     QTimer* m_meterTimer = nullptr;
     bool m_initialSeekDone = false;

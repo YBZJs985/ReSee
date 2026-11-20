@@ -95,6 +95,9 @@ void FileScanner::workerMain(AppConfig config, bool runStageB) {
     m_stageARunning.store(false, std::memory_order_release);
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     if (!ok || m_stopRequested.load()) {
+        if (!ok && !m_stopRequested.load()) {
+            emit scanError(QStringLiteral("无法建立录像索引。请检查应用数据目录的写入权限和剩余空间，再重新扫描。"));
+        }
         emit progressChanged({false, false, total, 0, QStringLiteral("扫描已取消或失败")});
         return;
     }
@@ -114,7 +117,7 @@ void FileScanner::workerMain(AppConfig config, bool runStageB) {
 bool FileScanner::doStageA(const AppConfig& config, int& outTotal, int& outChanged, int& outRemoved) {
     if (!m_db || !m_db->isOpen()) return false;
 
-    m_db->syncStreamsConfig(config.cameras, config.streams);
+    if (!m_db->syncStreamsConfig(config.cameras, config.streams)) return false;
     const auto existing = m_db->loadExistingFilesMeta();
     const int64_t scanGen = TimeUtils::nowEpochMs();
     const int64_t nowMs = scanGen;
@@ -142,21 +145,27 @@ bool FileScanner::doStageA(const AppConfig& config, int& outTotal, int& outChang
         if (m_stopRequested.load(std::memory_order_acquire)) return false;
         const auto rootFs = toFsPath(cam.rootPath);
         std::error_code ec;
-        if (!std::filesystem::exists(rootFs, ec)) {
-            const QString msg = QStringLiteral("目录不可访问: %1").arg(cam.rootPath);
+        if (!std::filesystem::is_directory(rootFs, ec)) {
+            const QString msg = QStringLiteral("%1：无法打开录像目录 %2。请确认 NAS 已连接，且该文件夹可以在系统文件管理器中打开。")
+                .arg(cam.displayName, cam.rootPath);
             MCS_LOG_WARN("SCAN", msg);
             emit scanError(msg);
             continue; // 保留该摄像头历史有效索引，不误删
         }
 
-        bool camScanOk = true;
-        auto options = std::filesystem::directory_options::skip_permission_denied;
-        for (std::filesystem::recursive_directory_iterator it(rootFs, options, ec), end;
+        const int totalBeforeCamera = outTotal;
+        int corruptInCamera = 0;
+        bool metadataReadFailed = false;
+        for (std::filesystem::recursive_directory_iterator it(rootFs, ec), end;
              it != end && !ec; it.increment(ec)) {
             if (m_stopRequested.load(std::memory_order_acquire)) return false;
 
             const auto& entry = *it;
-            if (!entry.is_regular_file(ec)) continue;
+            if (!entry.is_regular_file(ec)) {
+                metadataReadFailed |= bool(ec);
+                ec.clear();
+                continue;
+            }
 
             const QString fileName = fromFsPath(entry.path().filename());
             if (!fileName.endsWith(QLatin1String(".mp4"), Qt::CaseInsensitive)) continue;
@@ -180,12 +189,14 @@ bool FileScanner::doStageA(const AppConfig& config, int& outTotal, int& outChang
             ec.clear();
             const auto szRaw = entry.file_size(ec);
             if (ec) {
+                metadataReadFailed = true;
                 ec.clear();
                 continue;
             }
             ec.clear();
             const auto wtRaw = entry.last_write_time(ec);
             if (ec) {
+                metadataReadFailed = true;
                 ec.clear();
                 continue;
             }
@@ -214,6 +225,7 @@ bool FileScanner::doStageA(const AppConfig& config, int& outTotal, int& outChang
             rec.mtimeMs = mtimeMs;
             if (fsize < 1024) {
                 rec.status = SegmentStatus::Corrupt;
+                ++corruptInCamera;
             } else if (nowMs - mtimeMs < 15000 && fsize < 134217728LL) {
                 rec.status = SegmentStatus::Writing;
             } else {
@@ -222,8 +234,18 @@ bool FileScanner::doStageA(const AppConfig& config, int& outTotal, int& outChang
             toUpsert.append(rec);
             ++outChanged;
         }
-        if (ec) camScanOk = false;
-        if (camScanOk) {
+        if (corruptInCamera > 0) {
+            emit scanError(QStringLiteral("%1：有 %2 个录像片段损坏或未写完。请检查文件大小，并尝试用其他播放器打开。")
+                .arg(cam.displayName).arg(corruptInCamera));
+        }
+        if (ec || metadataReadFailed) {
+            emit scanError(QStringLiteral("%1：读取录像目录时出错。请检查网络连接及子文件夹的读取权限，然后重新扫描。")
+                .arg(cam.displayName));
+        } else {
+            if (outTotal == totalBeforeCamera) {
+                emit scanError(QStringLiteral("%1：未找到可识别的录像。请选择包含 00_年月日时分秒_年月日时分秒.mp4 的文件夹。双摄的第二路使用 10_ 前缀。")
+                    .arg(cam.displayName));
+            }
             for (const auto& s : config.streams) {
                 if (s.cameraId == cam.cameraId) {
                     reachableStreamIndices.append(s.streamIndex);
@@ -233,10 +255,10 @@ bool FileScanner::doStageA(const AppConfig& config, int& outTotal, int& outChang
     }
 
     if (!unchangedIds.isEmpty()) {
-        m_db->touchScanGenBatch(unchangedIds, scanGen);
+        if (!m_db->touchScanGenBatch(unchangedIds, scanGen)) return false;
     }
     if (!toUpsert.isEmpty()) {
-        m_db->insertOrUpdateSegmentsBatch(toUpsert, scanGen);
+        if (!m_db->insertOrUpdateSegmentsBatch(toUpsert, scanGen)) return false;
     }
     outRemoved = reachableStreamIndices.isEmpty()
         ? 0

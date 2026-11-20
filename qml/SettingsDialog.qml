@@ -18,9 +18,13 @@ Dialog {
     property var dirty: ({})
     property bool opening: false
     property string shortcutWarning: ""
-    readonly property var pageNames: ["机位", "播放与缓存", "健康监测", "时间轴", "快捷键"]
+    property string directoryIssue: ""
+    readonly property bool cameraSetupOpen: addCameraDialog.opened
+    readonly property var pageNames: ["机位", "播放与缓存", "健康监测", "时间轴", "快捷键", "关于"]
 
-    function openAddCamera() {
+    function openAddCamera(firstCamera) {
+        addCameraDialog.firstCamera = firstCamera === true
+        addCameraDialog.inputIssue = ""
         newName.text = ""
         newPath.text = ""
         dualCamera.checked = false
@@ -78,6 +82,7 @@ Dialog {
     onAboutToShow: {
         opening = true
         shortcutWarning = ""
+        directoryIssue = ""
         cachePath.text = player.cacheDir
         cacheSize.text = String(player.cacheMaxGb)
         hardware.checked = player.preferHwDecode
@@ -188,7 +193,16 @@ Dialog {
                 ColumnLayout {
                     width: cameraPage.availableWidth
                     spacing: 10
+                    Label {
+                        Layout.fillWidth: true
+                        visible: text !== ""
+                        text: root.directoryIssue || player.scanIssueText
+                        textFormat: Text.PlainText
+                        wrapMode: Text.Wrap
+                        color: Theme.warn
+                    }
                     RowLayout {
+                        visible: player.streamCount > 0
                         Label { text: "机位"; color: Theme.textDim; Layout.preferredWidth: 128 }
                         Label { text: "设备 ID"; color: Theme.textDim; Layout.preferredWidth: 116 }
                         Label { text: "录像目录"; color: Theme.textDim; Layout.fillWidth: true }
@@ -288,10 +302,10 @@ Dialog {
                     }
                     RowLayout {
                         Layout.topMargin: 10
-                        PrimaryButton { text: "添加摄像机"; onClicked: root.openAddCamera() }
+                        PrimaryButton { text: "添加摄像机"; onClicked: root.openAddCamera(player.streamCount === 0) }
                         DarkButton {
                             text: "应用目录并重新扫描"
-                            enabled: !player.scanning && player.streamCount > 0
+                            enabled: player.streamCount > 0
                             onClicked: {
                                 root.savePending()
                                 const dirs = []
@@ -299,9 +313,11 @@ Dialog {
                                     const row = cameraRows.itemAt(i)
                                     if (row.separatePath) dirs.push(row.directory)
                                 }
-                                player.updateCameraDirectories(dirs, true)
-                                for (let i = 0; i < cameraRows.count; ++i)
-                                    cameraRows.itemAt(i).loadFields()
+                                root.directoryIssue = player.updateCameraDirectories(dirs, true)
+                                if (root.directoryIssue === "") {
+                                    for (let i = 0; i < cameraRows.count; ++i)
+                                        cameraRows.itemAt(i).loadFields()
+                                }
                             }
                         }
                         DarkButton {
@@ -433,6 +449,23 @@ Dialog {
                     Label { Layout.columnSpan: 2; text: root.shortcutWarning; visible: text !== ""; color: Theme.error }
                 }
             }
+
+            Item {
+                ColumnLayout {
+                    width: parent.width
+                    Label { text: "ReSee"; color: Theme.text; font.pixelSize: 18 }
+                    Label {
+                        Layout.fillWidth: true
+                        wrapMode: Text.Wrap
+                        text: "本应用使用 Qt 和 FFmpeg。公开 Windows ZIP 使用动态链接的 LGPL 库，许可与对应源码见包内第三方许可文档。"
+                        color: Theme.textDim
+                    }
+                    DarkButton {
+                        text: "GitHub 项目"
+                        onClicked: Qt.openUrlExternally("https://github.com/a15112542067-YBZJ/ReSee")
+                    }
+                }
+            }
         }
     }
 
@@ -440,6 +473,7 @@ Dialog {
         id: recordingFolderDialog
         title: "选择录像目录"
         onAccepted: {
+            addCameraDialog.inputIssue = ""
             newPath.text = player.localFolderPath(selectedFolder)
             if (newName.text.trim() === "")
                 newName.text = newPath.text.split(/[\\/]/).filter(part => part.length).pop() || ""
@@ -460,16 +494,23 @@ Dialog {
     Dialog {
         id: addCameraDialog
         objectName: "addCameraDialog"
-        parent: Overlay.overlay
+        parent: root.parent
         anchors.centerIn: parent
-        width: Math.min(540, root.width - 30)
+        width: Math.min(520, parent.width - 36)
         modal: true
-        title: "添加摄像机"
+        property bool firstCamera: false
+        property string inputIssue: ""
+        title: firstCamera ? "设置第一个摄像机" : "添加摄像机"
         background: Rectangle { color: Theme.bg1; border.color: Theme.line }
         contentItem: ColumnLayout {
             spacing: 8
-            Label { text: "摄像机名称"; color: Theme.text }
-            SettingsField { id: newName; objectName: "newCameraName"; Layout.fillWidth: true; Accessible.name: "摄像机名称" }
+            Label {
+                visible: addCameraDialog.firstCamera
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                text: "选择存有摄像机 MP4 录像的本地文件夹或 NAS 目录。添加后会自动扫描并显示在时间轴上。"
+                color: Theme.textDim
+            }
             Label { text: "录像目录"; color: Theme.text }
             RowLayout {
                 SettingsField {
@@ -477,6 +518,7 @@ Dialog {
                     objectName: "newCameraPath"
                     Layout.fillWidth: true
                     Accessible.name: "录像目录"
+                    onTextEdited: addCameraDialog.inputIssue = ""
                     onEditingFinished: {
                         if (text !== dualCamera.lastCheckedPath) {
                             dualCamera.lastCheckedPath = text
@@ -486,6 +528,16 @@ Dialog {
                 }
                 DarkButton { text: "浏览…"; onClicked: recordingFolderDialog.open() }
             }
+            Label {
+                Layout.fillWidth: true
+                text: addCameraDialog.inputIssue
+                textFormat: Text.PlainText
+                visible: text !== ""
+                wrapMode: Text.Wrap
+                color: Theme.error
+            }
+            Label { text: "摄像机名称（可选）"; color: Theme.text }
+            SettingsField { id: newName; objectName: "newCameraName"; Layout.fillWidth: true; Accessible.name: "摄像机名称" }
             DarkCheckBox {
                 id: dualCamera
                 objectName: "newCameraDual"
@@ -494,14 +546,15 @@ Dialog {
             }
             RowLayout {
                 Layout.alignment: Qt.AlignRight
-                DarkButton { text: "取消"; onClicked: addCameraDialog.close() }
+                DarkButton { text: addCameraDialog.firstCamera ? "稍后配置" : "取消"; onClicked: addCameraDialog.close() }
                 PrimaryButton {
                     objectName: "saveNewCamera"
-                    text: "添加"
+                    text: "添加并扫描"
                     enabled: newPath.text.trim() !== ""
                     onClicked: {
                         root.savePending()
-                        if (player.addCamera(newName.text, newPath.text, dualCamera.checked)) {
+                        addCameraDialog.inputIssue = player.addCamera(newName.text, newPath.text, dualCamera.checked)
+                        if (addCameraDialog.inputIssue === "") {
                             addCameraDialog.close()
                             for (let i = 0; i < cameraRows.count; ++i)
                                 cameraRows.itemAt(i).loadFields()

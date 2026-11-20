@@ -27,7 +27,7 @@ ApplicationWindow {
     palette.highlightedText: Theme.ink
 
     readonly property bool shortcutsActive: !transport.editing && !transport.controlsOpen && !settingsDialog.opened
-        && !bookmarkDialog.opened && !win.bookmarkInputFocused
+        && !settingsDialog.cameraSetupOpen && !bookmarkDialog.opened && !win.bookmarkInputFocused
     property bool bookmarkInputFocused: false
     property bool diskWarningDismissed: false
     readonly property int healthLevel: player.health.offlineCount > 0 || player.diagnostics.nasDisconnected
@@ -39,7 +39,11 @@ ApplicationWindow {
         else if (!player.diagnosticsVisible && diagnosticsPopup.visible)
             diagnosticsPopup.close()
     }
-    Component.onCompleted: syncDiagnostics()
+    Component.onCompleted: {
+        syncDiagnostics()
+        if (player.firstRun && player.streamCount === 0)
+            Qt.callLater(() => settingsDialog.openAddCamera(true))
+    }
 
     function openBookmark() {
         bookmarkDialog.openForCreate(timeline.mapToItem(Overlay.overlay, timeline.playheadX, 0))
@@ -90,6 +94,10 @@ ApplicationWindow {
             onOpenBookmarkDialog: win.openBookmark()
             onToggleBookmarks: bookmarksPopup.visible ? bookmarksPopup.close() : bookmarksPopup.open()
             onOpenSettings: settingsDialog.open()
+            onOpenRecordingSettings: {
+                settingsDialog.page = 0
+                settingsDialog.open()
+            }
             onToggleDiagnostics: player.diagnosticsVisible = !player.diagnosticsVisible
         }
 
@@ -159,11 +167,7 @@ ApplicationWindow {
                     PrimaryButton {
                         anchors.horizontalCenter: parent.horizontalCenter
                         text: "添加摄像机"
-                        onClicked: {
-                            settingsDialog.page = 0
-                            settingsDialog.open()
-                            settingsDialog.openAddCamera()
-                        }
+                        onClicked: settingsDialog.openAddCamera(true)
                     }
                 }
 
@@ -230,7 +234,10 @@ ApplicationWindow {
     }
 
     BookmarkDialog { id: bookmarkDialog }
-    SettingsDialog { id: settingsDialog }
+    SettingsDialog {
+        id: settingsDialog
+        parent: Overlay.overlay
+    }
 
     Popup {
         id: bookmarksPopup

@@ -14,6 +14,7 @@ struct sqlite3;
 namespace mcs {
 
 struct ExistingFileMeta {
+    QString streamKey;
     int64_t id = 0;
     int64_t fileSize = 0;
     int64_t mtimeMs = 0;

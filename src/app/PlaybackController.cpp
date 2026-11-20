@@ -65,6 +65,7 @@ QImage nv12FrameToQImage(const DecodedFrame& f) {
 
 PlaybackController::PlaybackController(QObject* parent) : QObject(parent) {
     m_config = AppConfig::createDefault();
+    m_firstRun = !QFileInfo::exists(m_config.configFilePath());
     m_config.loadFromJson(m_config.configFilePath());
     if (m_config.lastFocusedStream >= streamCount()
         || (m_config.lastFocusedStream == -2 && !groupedLayoutAvailable())) {
@@ -146,6 +147,7 @@ void PlaybackController::initialize() {
     });
 
     connect(m_scanner.get(), &FileScanner::progressChanged, this, [this](const ScanProgress& p) {
+        if (p.scanning && !p.stageBRunning) m_scanIssues.clear();
         m_scanProgress = p;
         if (m_scheduler) {
             m_scheduler->setIndexingActive(m_scanner->isStageARunning());
@@ -155,9 +157,7 @@ void PlaybackController::initialize() {
     connect(m_scanner.get(), &FileScanner::stageACompleted, this, &PlaybackController::onStageACompleted);
     connect(m_scanner.get(), &FileScanner::stageBCompleted, this, &PlaybackController::onStageBCompleted);
     connect(m_scanner.get(), &FileScanner::cameraRescanCompleted, this, &PlaybackController::onCameraRescanCompleted);
-    connect(m_scanner.get(), &FileScanner::scanError, this, [this](const QString& msg) {
-        emit toastMessage(msg, true);
-    });
+    connect(m_scanner.get(), &FileScanner::scanError, this, &PlaybackController::reportScanIssue);
 
     connect(m_healthMonitor.get(), &HealthMonitor::newFilesDetectedOnCamera, this, [this](int streamIdx) {
         const int64_t now = TimeUtils::nowEpochMs();
@@ -250,7 +250,7 @@ void PlaybackController::onStageBCompleted(int probed, int corrupt) {
         m_dateNav->refreshFromScheduler();
     }
     if (corrupt > 0) {
-        emit toastMessage(QStringLiteral("后台校验完成，发现 %1 个损坏片段已标记").arg(corrupt), true);
+        reportScanIssue(QStringLiteral("%1 个录像片段无法读取。请确认录像写入已完成，并尝试用其他播放器打开这些文件。").arg(corrupt));
     }
 }
 
@@ -703,7 +703,16 @@ void PlaybackController::onAudioMeterTick() {
     emit audioMeterChanged();
 }
 
+void PlaybackController::reportScanIssue(const QString& issue) {
+    if (m_scanIssues.contains(issue)) return;
+    m_scanIssues.append(issue);
+    emit scanChanged();
+}
+
 void PlaybackController::rescanDirectories() {
+    m_scanIssues.clear();
+    m_scanProgress = {true, false, 0, 0, QStringLiteral("正在扫描录像目录…")};
+    emit scanChanged();
     m_scheduler->setIndexingActive(true);
     m_scanner->startScan(m_config, true);
 }
@@ -873,24 +882,66 @@ void PlaybackController::updateCacheAndDecodeSettings(const QString& cacheDir,
     emit toastMessage(QStringLiteral("缓存与解码设置已保存"), false);
 }
 
-void PlaybackController::updateCameraDirectories(const QVariantList& paths, bool rescanNow) {
-    for (int i = 0; i < std::min<int>(paths.size(), m_config.cameras.size()); ++i) {
-        const QString p = paths.at(i).toString().trimmed();
-        if (!p.isEmpty()) {
-            m_config.cameras[i].rootPath = p;
+namespace {
+QString cameraDirectoryIssue(const QString& path) {
+    if (path.isEmpty() || !QDir::isAbsolutePath(path)) {
+        return QStringLiteral("请选择录像文件夹，或输入完整路径。");
+    }
+    const QFileInfo directory(path);
+    if (!directory.isDir() || !directory.isReadable()) {
+        return QStringLiteral("无法读取录像目录。请先在系统文件管理器打开它，确认 NAS 已连接、路径正确且有读取权限：%1").arg(path);
+    }
+    return {};
+}
+
+bool sameCameraDirectory(const QString& a, const QString& b) {
+    const auto left = QDir::cleanPath(QDir::fromNativeSeparators(a));
+    const auto right = QDir::cleanPath(QDir::fromNativeSeparators(b));
+#ifdef SYNC_PLATFORM_WINDOWS
+    return left.compare(right, Qt::CaseInsensitive) == 0;
+#else
+    return left == right;
+#endif
+}
+
+QString saveCameraConfigIssue(const AppConfig& config) {
+    if (config.saveToJson(config.configFilePath())) return {};
+    return QStringLiteral("无法保存配置。请检查应用数据目录可写且有剩余空间：%1").arg(config.dataDir);
+}
+}
+
+QString PlaybackController::updateCameraDirectories(const QVariantList& paths, bool rescanNow) {
+    auto updated = m_config;
+    for (int i = 0; i < std::min<int>(paths.size(), updated.cameras.size()); ++i) {
+        const auto path = QDir::fromNativeSeparators(paths.at(i).toString().trimmed());
+        if (path == m_config.cameras[i].rootPath) continue;
+        const auto issue = cameraDirectoryIssue(path);
+        if (!issue.isEmpty()) return updated.cameras[i].displayName + QStringLiteral("：") + issue;
+        updated.cameras[i].rootPath = path;
+    }
+    for (int i = 0; i < updated.cameras.size(); ++i) {
+        for (int j = 0; j < i; ++j) {
+            if (sameCameraDirectory(updated.cameras[i].rootPath, updated.cameras[j].rootPath)
+                && !sameCameraDirectory(m_config.cameras[i].rootPath, m_config.cameras[j].rootPath)) {
+                return QStringLiteral("两个摄像机使用了同一个目录。双摄请添加一次并勾选「双摄」。");
+            }
         }
     }
+    const auto saveIssue = saveCameraConfigIssue(updated);
+    if (!saveIssue.isEmpty()) return saveIssue;
+
+    if (rescanNow) m_scanner->stop();
+    m_config = std::move(updated);
     m_config.rebuildStreamsFromCameras();
-    if (m_healthMonitor) {
-        m_healthMonitor->configure(m_config);
-    }
-    saveState();
+    if (m_healthMonitor) m_healthMonitor->configure(m_config);
     emit settingsChanged();
     if (rescanNow) {
         m_scheduler->initialize(m_config);
+        applyAudioRoutingForFocus(m_config.lastFocusedStream);
         rescanDirectories();
         if (m_healthMonitor) m_healthMonitor->triggerCheckNow();
     }
+    return {};
 }
 
 bool PlaybackController::detectDualCameraDir(const QString& rootPath) const {
@@ -900,11 +951,14 @@ bool PlaybackController::detectDualCameraDir(const QString& rootPath) const {
     return it.hasNext();
 }
 
-bool PlaybackController::addCamera(const QString& displayName, const QString& rootPath, bool isDual) {
+QString PlaybackController::addCamera(const QString& displayName, const QString& rootPath, bool isDual) {
     const QString cleanPath = QDir::fromNativeSeparators(rootPath.trimmed());
-    if (cleanPath.isEmpty()) {
-        emit toastMessage(QStringLiteral("请输入或选择有效的录像目录"), true);
-        return false;
+    const auto issue = cameraDirectoryIssue(cleanPath);
+    if (!issue.isEmpty()) return issue;
+    for (const auto& camera : m_config.cameras) {
+        if (sameCameraDirectory(camera.rootPath, cleanPath)) {
+            return QStringLiteral("此录像目录已添加。请在「设置 → 机位」中查看或修改。");
+        }
     }
     const QFileInfo fi(cleanPath);
     QString baseId = fi.fileName().trimmed();
@@ -931,11 +985,14 @@ bool PlaybackController::addCamera(const QString& displayName, const QString& ro
     cam.sortOrder = m_config.cameras.size();
     cam.recursive = true;
     cam.maxDepth = isDual ? 3 : 2;
-    m_config.cameras.append(cam);
-
+    auto updated = m_config;
+    updated.cameras.append(cam);
+    const auto saveIssue = saveCameraConfigIssue(updated);
+    if (!saveIssue.isEmpty()) return saveIssue;
+    m_config = std::move(updated);
     reloadCameraConfiguration();
     emit toastMessage(QStringLiteral("已添加摄像头「%1」，开始扫描录像").arg(cam.displayName), false);
-    return true;
+    return {};
 }
 
 bool PlaybackController::removeCamera(const QString& cameraId) {

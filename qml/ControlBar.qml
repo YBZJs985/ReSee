@@ -9,6 +9,7 @@ Rectangle {
     signal openBookmarkDialog()
     signal toggleBookmarks()
     signal openSettings()
+    signal openRecordingSettings()
     signal toggleDiagnostics()
     property int healthLevel: 0
 
@@ -27,6 +28,12 @@ Rectangle {
             font.pixelSize: 11
             elide: Text.ElideRight
             Layout.maximumWidth: 220
+        }
+        DarkButton {
+            visible: player.scanIssueText !== ""
+            text: "录像目录提示"
+            Accessible.name: "查看录像目录提示"
+            onClicked: root.openRecordingSettings()
         }
         DarkButton { text: "+ 标记"; onClicked: root.openBookmarkDialog() }
         DarkButton { text: "标记列表"; onClicked: root.toggleBookmarks() }
