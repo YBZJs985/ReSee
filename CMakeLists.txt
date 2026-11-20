@@ -24,6 +24,7 @@ endif()
 find_package(Qt6 REQUIRED COMPONENTS
     Core
     Gui
+    GuiPrivate
     Qml
     Quick
     QuickControls2
@@ -180,6 +181,20 @@ if(WIN32)
 endif()
 
 qt_add_executable(ReSee ${APP_SOURCES})
+if(APPLE)
+    # QML 模块会在构建目录生成同名 ReSee/ 目录，避免与可执行文件输出冲突。
+    set_target_properties(ReSee PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+        MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_GUI_IDENTIFIER "com.resee.desktop"
+        MACOSX_BUNDLE_BUNDLE_NAME "ReSee"
+        MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_ICON_FILE "app_icon.icns"
+    )
+    set_source_files_properties(resources/app_icon.icns PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+    target_sources(ReSee PRIVATE resources/app_icon.icns)
+endif()
 set_source_files_properties(qml/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 qt_add_resources(ReSee "toolbar_icons"
     PREFIX "/ui"
